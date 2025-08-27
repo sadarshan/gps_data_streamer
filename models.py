@@ -1,46 +1,7 @@
 from pydantic import BaseModel, Field, validator
-from sqlalchemy import Column, Integer, Float, String, DateTime, Text, Index
-from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime, timedelta
-from typing import Optional
-
-Base = declarative_base()
-
-class GPSData(Base):
-    __tablename__ = "gps_data"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    device_id = Column(String(50), nullable=False, index=True)
-    latitude = Column(Float, nullable=False, index=True)
-    longitude = Column(Float, nullable=False, index=True)
-    altitude = Column(Float, nullable=True)
-    speed = Column(Float, nullable=True)
-    heading = Column(Float, nullable=True)
-    accuracy = Column(Float, nullable=True)
-    timestamp = Column(DateTime, nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
-    additional_data = Column(Text, nullable=True)
-    
-    # Add compound indexes for common queries
-    __table_args__ = (
-        # Index for querying by device and time range
-        Index('idx_device_timestamp', 'device_id', 'timestamp'),
-        # Index for location-based queries
-        Index('idx_location', 'latitude', 'longitude'),
-        # Index for time-based cleanup operations
-        Index('idx_created_at', 'created_at'),
-    )
-
-class SystemStats(Base):
-    __tablename__ = "system_stats"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
-    total_gps_records = Column(Integer, nullable=False)
-    database_size_bytes = Column(Integer, nullable=False)
-    database_usage_percentage = Column(Float, nullable=False)
-    post_requests_last_minute = Column(Integer, nullable=True)
-    average_posts_per_minute = Column(Float, nullable=True)
+from typing import Optional, Dict, Any, Union
+from bson import ObjectId
 
 class GPSDataCreate(BaseModel):
     device_id: str = Field(..., min_length=1, max_length=50, description="Device identifier")
@@ -108,29 +69,61 @@ class GPSDataCreate(BaseModel):
         return v
 
 class GPSDataResponse(BaseModel):
-    id: int
+    id: Optional[str] = Field(default=None, alias="_id")
     device_id: str
     latitude: float
     longitude: float
-    altitude: Optional[float]
-    speed: Optional[float]
-    heading: Optional[float]
-    accuracy: Optional[float]
+    altitude: Optional[float] = None
+    speed: Optional[float] = None
+    heading: Optional[float] = None
+    accuracy: Optional[float] = None
     timestamp: datetime
     created_at: datetime
-    additional_data: Optional[str]
+    additional_data: Optional[str] = None
+    
+    @validator('id', pre=True)
+    def convert_objectid_to_str(cls, v):
+        if isinstance(v, ObjectId):
+            return str(v)
+        return v
     
     class Config:
-        from_attributes = True
+        populate_by_name = True
 
 class SystemStatsResponse(BaseModel):
-    id: int
+    id: Optional[str] = Field(default=None, alias="_id")
     timestamp: datetime
     total_gps_records: int
     database_size_bytes: int
     database_usage_percentage: float
-    post_requests_last_minute: Optional[int]
-    average_posts_per_minute: Optional[float]
+    post_requests_last_minute: Optional[int] = None
+    average_posts_per_minute: Optional[float] = None
+    
+    @validator('id', pre=True)
+    def convert_objectid_to_str(cls, v):
+        if isinstance(v, ObjectId):
+            return str(v)
+        return v
     
     class Config:
-        from_attributes = True
+        populate_by_name = True
+
+class GPSDataDocument(BaseModel):
+    device_id: str
+    latitude: float
+    longitude: float
+    altitude: Optional[float] = None
+    speed: Optional[float] = None
+    heading: Optional[float] = None
+    accuracy: Optional[float] = None
+    timestamp: datetime
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    additional_data: Optional[str] = None
+
+class SystemStatsDocument(BaseModel):
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    total_gps_records: int
+    database_size_bytes: int
+    database_usage_percentage: float
+    post_requests_last_minute: Optional[int] = None
+    average_posts_per_minute: Optional[float] = None

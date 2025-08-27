@@ -1,42 +1,46 @@
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy.orm import sessionmaker
-import aiosqlite
+from motor.motor_asyncio import AsyncIOMotorClient
 import os
+from typing import AsyncGenerator
 
-from models import Base
+DATABASE_URL = os.getenv("MONGODB_URL", "mongodb+srv://darshannitt:<db_password>@cluster0.f9ik0l3.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
+DATABASE_NAME = os.getenv("DATABASE_NAME", "gps_streamer")
 
-DATABASE_URL = "sqlite+aiosqlite:///./gps_data.db"
-
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=False,
-    connect_args={"check_same_thread": False}
-)
-
-AsyncSessionLocal = async_sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False
-)
+client: AsyncIOMotorClient = None
+database = None
 
 async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    """Initialize MongoDB connection"""
+    global client, database
+    
+    # Replace <db_password> with actual password from environment
+    db_password = os.getenv("DB_PASSWORD", "")
+    mongodb_url = DATABASE_URL.replace("<db_password>", db_password)
+    
+    client = AsyncIOMotorClient(mongodb_url)
+    database = client[DATABASE_NAME]
+    
+    # Test the connection
+    try:
+        await client.admin.command('ping')
+        print("Connected to MongoDB successfully!")
+    except Exception as e:
+        print(f"Failed to connect to MongoDB: {e}")
+        raise
 
 async def get_db():
-    async with AsyncSessionLocal() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
+    """Get database instance"""
+    return database
+
+async def close_db():
+    """Close database connection"""
+    global client
+    if client:
+        client.close()
 
 async def get_db_size():
-    """Get database file size in bytes"""
-    db_path = "./gps_data.db"
-    if os.path.exists(db_path):
-        return os.path.getsize(db_path)
-    return 0
+    """Get database size estimation"""
+    try:
+        stats = await database.command("dbStats")
+        return stats.get("dataSize", 0)
+    except Exception:
+        return 0

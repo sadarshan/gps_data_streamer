@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-from database import get_db_size, AsyncSessionLocal
+from database import get_db_size, get_db
 from crud import get_gps_data_count, create_system_stats, get_gps_data_filtered
 from backup_manager import handle_database_management
 
@@ -50,73 +50,71 @@ def calculate_average_posts_per_minute(minutes: int = 5) -> Optional[float]:
 async def collect_system_metrics():
     """Collect and store system metrics"""
     try:
-        async with AsyncSessionLocal() as db:
-            # Get database metrics
-            db_size = await get_db_size()
-            usage_percentage = (db_size / MAX_DB_SIZE) * 100
-            total_records = await get_gps_data_count(db)
+        db = await get_db()
+        # Get database metrics
+        db_size = await get_db_size()
+        usage_percentage = (db_size / MAX_DB_SIZE) * 100
+        total_records = await get_gps_data_count(db)
+        
+        # Get rate metrics
+        posts_last_minute = get_posts_last_minute()
+        avg_posts_per_minute = calculate_average_posts_per_minute()
+        
+        # Store metrics
+        await create_system_stats(
+            db,
+            total_gps_records=total_records,
+            database_size_bytes=db_size,
+            database_usage_percentage=usage_percentage,
+            post_requests_last_minute=posts_last_minute,
+            average_posts_per_minute=avg_posts_per_minute
+        )
+        
+        logger.info(f"System metrics collected - DB: {db_size/1024/1024:.1f}MB ({usage_percentage:.1f}%), Records: {total_records}, Posts/min: {posts_last_minute}")
+        
+        # Handle database management (backup/purging)
+        await handle_database_management(usage_percentage)
+        
+        # Broadcast system stats to WebSocket clients
+        try:
+            # Import here to avoid circular imports
+            from websocket_manager import ws_manager
+            await ws_manager.broadcast({
+                "type": "system_stats",
+                "data": {
+                    "total_gps_records": total_records,
+                    "database_size_bytes": db_size,
+                    "database_usage_percentage": usage_percentage,
+                    "post_requests_last_minute": posts_last_minute,
+                    "average_posts_per_minute": avg_posts_per_minute,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            })
             
-            # Get rate metrics
-            posts_last_minute = get_posts_last_minute()
-            avg_posts_per_minute = calculate_average_posts_per_minute()
-            
-            # Store metrics
-            await create_system_stats(
-                db,
-                total_gps_records=total_records,
-                database_size_bytes=db_size,
-                database_usage_percentage=usage_percentage,
-                post_requests_last_minute=posts_last_minute,
-                average_posts_per_minute=avg_posts_per_minute
-            )
-            
-            await db.commit()
-            
-            logger.info(f"System metrics collected - DB: {db_size/1024/1024:.1f}MB ({usage_percentage:.1f}%), Records: {total_records}, Posts/min: {posts_last_minute}")
-            
-            # Handle database management (backup/purging)
-            await handle_database_management(usage_percentage)
-            
-            # Broadcast system stats to WebSocket clients
-            try:
-                # Import here to avoid circular imports
-                from websocket_manager import ws_manager
-                await ws_manager.broadcast({
-                    "type": "system_stats",
-                    "data": {
-                        "total_gps_records": total_records,
-                        "database_size_bytes": db_size,
-                        "database_usage_percentage": usage_percentage,
-                        "post_requests_last_minute": posts_last_minute,
-                        "average_posts_per_minute": avg_posts_per_minute,
-                        "timestamp": datetime.utcnow().isoformat()
+            # Also broadcast recent GPS data
+            recent_data = await get_gps_data_filtered(db, limit=5)
+            await ws_manager.broadcast({
+                "type": "gps_data",
+                "data": [
+                    {
+                        "id": record.id,
+                        "device_id": record.device_id,
+                        "latitude": record.latitude,
+                        "longitude": record.longitude,
+                        "timestamp": record.timestamp.isoformat()
                     }
-                })
-                
-                # Also broadcast recent GPS data
-                recent_data = await get_gps_data_filtered(db, limit=5)
-                await ws_manager.broadcast({
-                    "type": "gps_data",
-                    "data": [
-                        {
-                            "id": record.id,
-                            "device_id": record.device_id,
-                            "latitude": record.latitude,
-                            "longitude": record.longitude,
-                            "timestamp": record.timestamp.isoformat()
-                        }
-                        for record in recent_data
-                    ]
-                })
-            except Exception as ws_error:
-                logger.warning(f"Error broadcasting WebSocket update: {ws_error}")
-            
-            # Check for warnings
-            if usage_percentage >= WARNING_THRESHOLD * 100:
-                if usage_percentage >= EMERGENCY_THRESHOLD * 100:
-                    logger.critical(f"EMERGENCY: Database at {usage_percentage:.1f}% capacity!")
-                else:
-                    logger.warning(f"WARNING: Database at {usage_percentage:.1f}% capacity!")
+                    for record in recent_data
+                ]
+            })
+        except Exception as ws_error:
+            logger.warning(f"Error broadcasting WebSocket update: {ws_error}")
+        
+        # Check for warnings
+        if usage_percentage >= WARNING_THRESHOLD * 100:
+            if usage_percentage >= EMERGENCY_THRESHOLD * 100:
+                logger.critical(f"EMERGENCY: Database at {usage_percentage:.1f}% capacity!")
+            else:
+                logger.warning(f"WARNING: Database at {usage_percentage:.1f}% capacity!")
                     
     except Exception as e:
         logger.error(f"Error collecting system metrics: {str(e)}")

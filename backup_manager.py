@@ -7,9 +7,8 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any
 from pathlib import Path
 
-from database import AsyncSessionLocal
+from database import get_db
 from crud import get_all_gps_data_for_export, delete_oldest_records, get_gps_data_count
-from models import GPSData
 
 logger = logging.getLogger(__name__)
 
@@ -29,25 +28,25 @@ class BackupManager:
         filepath = self.backup_dir / filename
         
         try:
-            async with AsyncSessionLocal() as db:
-                # Get all GPS data
-                gps_data = await get_all_gps_data_for_export(db)
-                
-                if format == "json":
-                    await self._create_json_backup(gps_data, filepath)
-                elif format == "csv":
-                    await self._create_csv_backup(gps_data, filepath)
-                else:
-                    raise ValueError(f"Unsupported format: {format}")
-                
-                logger.info(f"Backup created: {filename} ({len(gps_data)} records)")
-                return filename
+            db = await get_db()
+            # Get all GPS data
+            gps_data = await get_all_gps_data_for_export(db)
+            
+            if format == "json":
+                await self._create_json_backup(gps_data, filepath)
+            elif format == "csv":
+                await self._create_csv_backup(gps_data, filepath)
+            else:
+                raise ValueError(f"Unsupported format: {format}")
+            
+            logger.info(f"Backup created: {filename} ({len(gps_data)} records)")
+            return filename
                 
         except Exception as e:
             logger.error(f"Error creating backup: {str(e)}")
             raise
     
-    async def _create_json_backup(self, gps_data: List[GPSData], filepath: Path):
+    async def _create_json_backup(self, gps_data: List, filepath: Path):
         """Create JSON backup file"""
         backup_data = {
             "metadata": {
@@ -76,7 +75,7 @@ class BackupManager:
         with open(filepath, 'w') as f:
             json.dump(backup_data, f, indent=2)
     
-    async def _create_csv_backup(self, gps_data: List[GPSData], filepath: Path):
+    async def _create_csv_backup(self, gps_data: List, filepath: Path):
         """Create CSV backup file"""
         with open(filepath, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
@@ -179,11 +178,10 @@ async def handle_database_management(usage_percentage: float) -> bool:
             # Emergency purge - remove 50% of oldest data immediately
             logger.critical(f"EMERGENCY PURGE: Database at {usage_percentage:.1f}% - purging 50% of old data")
             
-            async with AsyncSessionLocal() as db:
-                deleted_count = await delete_oldest_records(db, 50.0)
-                await db.commit()
-                logger.critical(f"Emergency purge completed: {deleted_count} records deleted")
-                action_taken = True
+            db = await get_db()
+            deleted_count = await delete_oldest_records(db, 50.0)
+            logger.critical(f"Emergency purge completed: {deleted_count} records deleted")
+            action_taken = True
                 
         elif usage_percentage >= 90.0:
             # Create backup and purge 25% of oldest data
@@ -194,11 +192,10 @@ async def handle_database_management(usage_percentage: float) -> bool:
             logger.info(f"Backup created: {backup_filename}")
             
             # Then purge old data
-            async with AsyncSessionLocal() as db:
-                deleted_count = await delete_oldest_records(db, 25.0)
-                await db.commit()
-                logger.warning(f"Auto purge completed: {deleted_count} records deleted after backup")
-                action_taken = True
+            db = await get_db()
+            deleted_count = await delete_oldest_records(db, 25.0)
+            logger.warning(f"Auto purge completed: {deleted_count} records deleted after backup")
+            action_taken = True
         
         # Always cleanup expired backups
         backup_manager.cleanup_expired_backups()

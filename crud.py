@@ -1,13 +1,14 @@
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, desc, func, delete
-from sqlalchemy.orm import selectinload
+from motor.motor_asyncio import AsyncIOMotorDatabase
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
+from bson import ObjectId
+from pymongo import DESCENDING, ASCENDING
 
-from models import GPSData, GPSDataCreate, SystemStats
+from models import GPSDataCreate, GPSDataDocument, GPSDataResponse, SystemStatsDocument, SystemStatsResponse
 
-async def create_gps_data(db: AsyncSession, gps_data: GPSDataCreate) -> GPSData:
-    db_gps_data = GPSData(
+async def create_gps_data(db: AsyncIOMotorDatabase, gps_data: GPSDataCreate) -> GPSDataResponse:
+    # Create GPS data document
+    gps_doc = GPSDataDocument(
         device_id=gps_data.device_id,
         latitude=gps_data.latitude,
         longitude=gps_data.longitude,
@@ -18,47 +19,57 @@ async def create_gps_data(db: AsyncSession, gps_data: GPSDataCreate) -> GPSData:
         timestamp=gps_data.timestamp,
         additional_data=gps_data.additional_data
     )
-    db.add(db_gps_data)
-    await db.flush()
-    await db.refresh(db_gps_data)
-    return db_gps_data
+    
+    # Insert into MongoDB
+    result = await db.gps_data.insert_one(gps_doc.dict())
+    
+    # Return the created document
+    created_doc = await db.gps_data.find_one({"_id": result.inserted_id})
+    return GPSDataResponse(**created_doc)
 
 async def get_gps_data_filtered(
-    db: AsyncSession,
+    db: AsyncIOMotorDatabase,
     device_id: Optional[str] = None,
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
     limit: int = 100,
     offset: int = 0
-) -> List[GPSData]:
-    query = select(GPSData)
+) -> List[GPSDataResponse]:
+    # Build query filter
+    query_filter = {}
     
-    conditions = []
     if device_id:
-        conditions.append(GPSData.device_id == device_id)
+        query_filter["device_id"] = device_id
     if start_time:
-        conditions.append(GPSData.timestamp >= start_time)
+        query_filter["timestamp"] = query_filter.get("timestamp", {})
+        query_filter["timestamp"]["$gte"] = start_time
     if end_time:
-        conditions.append(GPSData.timestamp <= end_time)
+        query_filter["timestamp"] = query_filter.get("timestamp", {})
+        query_filter["timestamp"]["$lte"] = end_time
     
-    if conditions:
-        query = query.where(and_(*conditions))
+    # Query with sorting, skip, and limit
+    cursor = db.gps_data.find(query_filter).sort("timestamp", DESCENDING).skip(offset).limit(limit)
     
-    query = query.order_by(desc(GPSData.timestamp)).offset(offset).limit(limit)
+    # Convert to response models
+    results = []
+    async for doc in cursor:
+        results.append(GPSDataResponse(**doc))
     
-    result = await db.execute(query)
-    return result.scalars().all()
+    return results
 
-async def get_gps_data_count(db: AsyncSession) -> int:
-    result = await db.execute(select(func.count(GPSData.id)))
-    return result.scalar()
+async def get_gps_data_count(db: AsyncIOMotorDatabase) -> int:
+    return await db.gps_data.count_documents({})
 
-async def get_oldest_gps_data(db: AsyncSession, limit: int) -> List[GPSData]:
-    query = select(GPSData).order_by(GPSData.timestamp).limit(limit)
-    result = await db.execute(query)
-    return result.scalars().all()
+async def get_oldest_gps_data(db: AsyncIOMotorDatabase, limit: int) -> List[GPSDataResponse]:
+    cursor = db.gps_data.find({}).sort("timestamp", ASCENDING).limit(limit)
+    
+    results = []
+    async for doc in cursor:
+        results.append(GPSDataResponse(**doc))
+    
+    return results
 
-async def delete_oldest_records(db: AsyncSession, percentage: float) -> int:
+async def delete_oldest_records(db: AsyncIOMotorDatabase, percentage: float) -> int:
     # Get total count
     total_count = await get_gps_data_count(db)
     delete_count = int(total_count * percentage / 100)
@@ -67,44 +78,52 @@ async def delete_oldest_records(db: AsyncSession, percentage: float) -> int:
         return 0
     
     # Get IDs of oldest records
-    oldest_query = select(GPSData.id).order_by(GPSData.timestamp).limit(delete_count)
-    result = await db.execute(oldest_query)
-    ids_to_delete = [row[0] for row in result.fetchall()]
+    cursor = db.gps_data.find({}, {"_id": 1}).sort("timestamp", ASCENDING).limit(delete_count)
+    ids_to_delete = [doc["_id"] async for doc in cursor]
     
     # Delete the records
     if ids_to_delete:
-        delete_query = delete(GPSData).where(GPSData.id.in_(ids_to_delete))
-        result = await db.execute(delete_query)
-        return result.rowcount
+        result = await db.gps_data.delete_many({"_id": {"$in": ids_to_delete}})
+        return result.deleted_count
     
     return 0
 
-async def get_all_gps_data_for_export(db: AsyncSession) -> List[GPSData]:
-    query = select(GPSData).order_by(GPSData.timestamp)
-    result = await db.execute(query)
-    return result.scalars().all()
+async def get_all_gps_data_for_export(db: AsyncIOMotorDatabase) -> List[GPSDataResponse]:
+    cursor = db.gps_data.find({}).sort("timestamp", ASCENDING)
+    
+    results = []
+    async for doc in cursor:
+        results.append(GPSDataResponse(**doc))
+    
+    return results
 
 async def create_system_stats(
-    db: AsyncSession,
+    db: AsyncIOMotorDatabase,
     total_gps_records: int,
     database_size_bytes: int,
     database_usage_percentage: float,
     post_requests_last_minute: Optional[int] = None,
     average_posts_per_minute: Optional[float] = None
-) -> SystemStats:
-    db_stats = SystemStats(
+) -> SystemStatsResponse:
+    # Create system stats document
+    stats_doc = SystemStatsDocument(
         total_gps_records=total_gps_records,
         database_size_bytes=database_size_bytes,
         database_usage_percentage=database_usage_percentage,
         post_requests_last_minute=post_requests_last_minute,
         average_posts_per_minute=average_posts_per_minute
     )
-    db.add(db_stats)
-    await db.flush()
-    await db.refresh(db_stats)
-    return db_stats
+    
+    # Insert into MongoDB
+    result = await db.system_stats.insert_one(stats_doc.dict())
+    
+    # Return the created document
+    created_doc = await db.system_stats.find_one({"_id": result.inserted_id})
+    return SystemStatsResponse(**created_doc)
 
-async def get_latest_system_stats(db: AsyncSession) -> Optional[SystemStats]:
-    query = select(SystemStats).order_by(desc(SystemStats.timestamp)).limit(1)
-    result = await db.execute(query)
-    return result.scalars().first()
+async def get_latest_system_stats(db: AsyncIOMotorDatabase) -> Optional[SystemStatsResponse]:
+    doc = await db.system_stats.find_one({}, sort=[("timestamp", DESCENDING)])
+    
+    if doc:
+        return SystemStatsResponse(**doc)
+    return None

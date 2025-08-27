@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy.ext.asyncio import AsyncSession
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional, List, Set
@@ -11,13 +10,17 @@ import logging
 import asyncio
 import os
 import json
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-from database import get_db, init_db
-from models import GPSData, GPSDataResponse, GPSDataCreate, SystemStats
+from database import get_db, init_db, close_db
+from models import GPSDataResponse, GPSDataCreate, SystemStatsResponse
 from crud import create_gps_data, get_gps_data_filtered, create_system_stats, get_latest_system_stats
 from monitoring import start_monitoring_task, record_post_request
 from backup_manager import backup_manager
@@ -35,6 +38,8 @@ async def lifespan(app: FastAPI):
     # Start background monitoring task
     asyncio.create_task(start_monitoring_task())
     yield
+    # Close database connection
+    await close_db()
 
 app = FastAPI(
     title="GPS Data Streamer",
@@ -79,13 +84,13 @@ async def websocket_endpoint(websocket: WebSocket):
 @limiter.limit("1/second")
 async def receive_gps_data(
     request: Request,
-    gps_data: GPSDataCreate,
-    db: AsyncSession = Depends(get_db)
+    gps_data: GPSDataCreate
 ):
     try:
         # Record this request for rate monitoring
         record_post_request()
         
+        db = await get_db()
         stored_data = await create_gps_data(db, gps_data)
         logger.info(f"GPS data stored: {stored_data.id} from device {gps_data.device_id}")
         return stored_data
@@ -103,10 +108,10 @@ async def get_gps_data(
     start_time: Optional[datetime] = Query(None, description="Start time filter (ISO format)"),
     end_time: Optional[datetime] = Query(None, description="End time filter (ISO format)"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of records"),
-    offset: int = Query(0, ge=0, description="Number of records to skip"),
-    db: AsyncSession = Depends(get_db)
+    offset: int = Query(0, ge=0, description="Number of records to skip")
 ):
     try:
+        db = await get_db()
         data = await get_gps_data_filtered(
             db,
             device_id=device_id,
@@ -121,8 +126,9 @@ async def get_gps_data(
         raise HTTPException(status_code=500, detail="Failed to retrieve GPS data")
 
 @app.get("/api/system/stats")
-async def get_system_stats(db: AsyncSession = Depends(get_db)):
+async def get_system_stats():
     try:
+        db = await get_db()
         stats = await get_latest_system_stats(db)
         return stats
     except Exception as e:
