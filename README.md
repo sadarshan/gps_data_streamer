@@ -1,329 +1,163 @@
 # GPS Data Streamer
 
-A high-performance FastAPI backend for GPS data collection and streaming with real-time dashboard, automatic data management, and comprehensive monitoring.
+A high-throughput GPS data ingestion system with real-time monitoring, automatic data management, and comprehensive backup capabilities. Optimized for deployment on Render with MongoDB Atlas.
 
 ## 🚀 Features
 
-### Core Functionality
 - **High-throughput GPS data ingestion** with rate limiting (1 request/second with burst capability)
-- **SQLite database** with automatic size management and intelligent purging
 - **Real-time web dashboard** with WebSocket updates
-- **Automatic backup system** with JSON/CSV export formats
-- **Comprehensive validation** for GPS coordinates, timestamps, and speed reasonableness
+- **Comprehensive GPS validation** (coordinates, speed, timestamps)
+- **Automatic database management** (90% warning, 95% emergency purge)
+- **Backup system** with JSON/CSV export and 24-hour expiration
+- **MongoDB Atlas integration** with connection pooling and multiple fallback URLs
+- **System monitoring** with performance metrics and capacity alerts
 
-### Data Management
-- **Automatic database management** - stays within 100MB limit automatically
-- **Smart purging system** - backs up data before deletion
-- **Emergency purge** at 95% capacity (removes 50% of old data)
-- **Regular purge** at 90% capacity (removes 25% after backup)
-- **24-hour backup expiration** with automatic cleanup
+## 🛠️ Technology Stack
 
-### Monitoring & Analytics
-- **Real-time system metrics** - database usage, request rates, record counts
-- **WebSocket-powered dashboard** with live updates
-- **Rate monitoring** - tracks POST requests per minute
-- **Performance optimization** with database indexing and connection pooling
+- **Backend**: FastAPI with async/await patterns
+- **Database**: MongoDB Atlas with Motor (async driver)
+- **Real-time**: WebSocket for live updates
+- **Rate Limiting**: SlowAPI for request throttling
+- **Deployment**: Render with Docker containerization
+- **Validation**: Pydantic v2 with comprehensive GPS data validation
 
-## 📋 Requirements
+## 📋 Prerequisites
 
-- Python 3.8+
-- FastAPI
-- SQLAlchemy 2.0+
-- SQLite
-- Modern web browser (for dashboard)
+- Python 3.11+
+- MongoDB Atlas account
+- Render account (for deployment)
 
-## 🛠️ Installation
+## 🔧 Installation & Setup
 
-### 1. Clone and Setup
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd GPS_streamer
+   ```
 
-```bash
-git clone <repository-url>
-cd GPS_streamer
+2. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+3. **Environment configuration**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your MongoDB Atlas password
+   ```
 
-# Install dependencies
-pip install -r requirements.txt
-```
+4. **Run locally**
+   ```bash
+   python main.py
+   ```
 
-### 2. Start the Server
+## 🌐 API Endpoints
 
-```bash
-python main.py
-```
+### GPS Data Endpoints
+- `POST /api/gps/data` - Submit GPS data (rate limited)
+- `GET /api/gps/data` - Retrieve GPS data with filtering
+- `GET /api/system/stats` - System statistics and monitoring
 
-The server will start on `http://localhost:8000`
+### Backup Management
+- `POST /api/backup/create` - Create manual backup (JSON/CSV)
+- `GET /api/backup/files` - List all backup files
+- `GET /api/backup/download/{filename}` - Download backup file
+- `DELETE /api/backup/cleanup` - Remove expired backups
 
-## 🎯 API Endpoints
+### Dashboard & Monitoring
+- `GET /` - Real-time web dashboard
+- `GET /health` - Health check endpoint
+- `WS /ws` - WebSocket for real-time updates
 
-### GPS Data Management
+## 📊 GPS Data Format
 
-#### POST /api/gps/data
-Submit GPS data (rate limited to 1/second)
-
-**Request Body:**
 ```json
 {
-  "device_id": "device-001",
+  "device_id": "device_001",
   "latitude": 37.7749,
   "longitude": -122.4194,
   "altitude": 100.5,
-  "speed": 5.2,
-  "heading": 45.0,
-  "accuracy": 3.0,
-  "timestamp": "2025-08-26T18:00:00Z"
+  "speed": 15.5,
+  "heading": 180.0,
+  "accuracy": 5.0,
+  "timestamp": "2024-01-01T12:00:00Z",
+  "additional_data": "{\"battery\": 85}"
 }
 ```
 
-**Validation Rules:**
-- Latitude: -90 to 90 degrees
-- Longitude: -180 to 180 degrees  
-- Speed: 0-200 m/s (reasonableness check)
-- Accuracy: 0-10000 meters
-- Timestamp: Within 24 hours (past) to 1 hour (future)
+## 🔒 Validation Rules
 
-#### GET /api/gps/data
-Retrieve GPS data with filtering
+- **Coordinates**: -90 to +90 (lat), -180 to +180 (lng), rejects exact 0,0
+- **Speed**: 0-200 m/s maximum (720 km/h commercial aircraft limit)
+- **Timestamps**: Within 1 hour future, max 7 days old
+- **Accuracy**: 0-10,000 meters, warnings for >50m
 
-**Parameters:**
-- `device_id` (optional): Filter by device
-- `start_time` (optional): Start time filter (ISO format)
-- `end_time` (optional): End time filter (ISO format)
-- `limit` (optional): Max records (1-1000, default 100)
-- `offset` (optional): Records to skip (default 0)
+## 🗄️ Database Management
 
-### System Monitoring
+- **Automatic purging**: 10% at 90% capacity, 20% at 95%
+- **100MB database limit** with real-time monitoring
+- **Indexed queries** for optimal performance
+- **Connection pooling** with automatic failover
 
-#### GET /api/system/stats
-Get current system statistics
+## 📦 Deployment on Render
 
-**Response:**
-```json
-{
-  "total_gps_records": 1250,
-  "database_size_bytes": 45678912,
-  "database_usage_percentage": 43.5,
-  "post_requests_last_minute": 12,
-  "average_posts_per_minute": 8.5,
-  "timestamp": "2025-08-26T18:00:00Z"
-}
-```
+1. **Connect your GitHub repository** to Render
+2. **Set environment variables**:
+   - `DB_PASSWORD`: Your MongoDB Atlas password
+   - `DATABASE_NAME`: gps_streamer
+3. **Deploy** using the provided `render.yaml` configuration
 
-### Backup Management
+## 🌍 Domain Configuration
 
-#### POST /api/backup/create?format=json|csv
-Create manual backup
+To use with your custom domain (airpixel.in):
+1. Deploy to Render and get the service URL
+2. Configure DNS CNAME record pointing to Render
+3. Update Render service with custom domain
 
-#### GET /api/backup/files
-List available backup files
+## 📈 Monitoring
 
-#### GET /api/backup/download/{filename}
-Download backup file
+The system provides comprehensive monitoring:
+- Real-time database usage tracking
+- Request rate monitoring
+- Connection health status
+- Automatic alert system
+- Performance metrics
 
-#### DELETE /api/backup/cleanup
-Remove expired backup files
+## 🔧 Development
 
-## 🌐 Web Dashboard
-
-Access the real-time dashboard at `http://localhost:8000/`
-
-**Features:**
-- Real-time system metrics with visual progress bars
-- Live GPS data feed showing recent submissions
-- Request rate monitoring with per-minute statistics
-- Backup file management with download links
-- WebSocket connection status indicator
-- Auto-refresh every 30 seconds as fallback
-
-**Dashboard Sections:**
-- **System Status**: Database usage, record counts, storage metrics
-- **Rate Monitoring**: POST request rates and averages
-- **Recent GPS Data**: Latest GPS coordinates by device
-- **Available Backups**: Downloadable backup files with metadata
-
-## 🧪 Testing
-
-### Using the GPS Simulator
-
-The included GPS simulator generates realistic GPS data for testing:
-
+### Local Testing
 ```bash
-# Basic usage - 1 device for 60 seconds
-python gps_simulator.py
+# Install dependencies
+pip install -r requirements.txt
 
-# Multiple devices with custom parameters
-python gps_simulator.py --devices 5 --duration 300 --rate 1.0
+# Set up environment
+cp .env.example .env
+# Add your MongoDB password to .env
 
-# Continuous simulation
-python gps_simulator.py --devices 3 --duration 0 --verbose
+# Run the application
+python main.py
 ```
 
-**Simulator Options:**
-- `--devices N`: Number of simulated devices
-- `--duration N`: Duration in seconds (0 = infinite)
-- `--rate N.N`: Requests per second per device
-- `--url URL`: API endpoint URL
-- `--verbose`: Enable debug logging
-
-### Manual Testing
-
+### Docker Development
 ```bash
-# Test basic GPS data submission
-curl -X POST "http://localhost:8000/api/gps/data" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "device_id": "test-001",
-    "latitude": 37.7749,
-    "longitude": -122.4194,
-    "speed": 5.0
-  }'
+# Build Docker image
+docker build -t gps-streamer .
 
-# Test rate limiting (should fail on rapid requests)
-for i in {1..5}; do
-  curl -X POST "http://localhost:8000/api/gps/data" \
-    -H "Content-Type: application/json" \
-    -d '{"device_id": "burst-'$i'", "latitude": 37.77, "longitude": -122.41}' &
-done
-
-# Test data retrieval with filtering
-curl "http://localhost:8000/api/gps/data?device_id=test-001&limit=10"
-
-# Test backup creation
-curl -X POST "http://localhost:8000/api/backup/create?format=json"
+# Run container
+docker run -p 8000:8000 --env-file .env gps-streamer
 ```
 
-## 🔧 Configuration
+## 📝 License
 
-### Database Limits
-- **Maximum size**: 100MB
-- **Warning threshold**: 90% (triggers backup + 25% purge)
-- **Emergency threshold**: 95% (triggers 50% purge)
-
-### Rate Limiting
-- **POST /api/gps/data**: 1 request per second per IP
-- Uses token bucket algorithm with burst capability
-
-### Backup Settings
-- **Expiration**: 24 hours
-- **Formats**: JSON, CSV
-- **Auto-cleanup**: Runs every 5 minutes during monitoring cycle
-
-### Monitoring Cycle
-- **Frequency**: Every 5 minutes
-- **WebSocket broadcasts**: Real-time updates to connected dashboard clients
-- **Metrics tracked**: DB size, record counts, request rates
-
-## 📊 Performance Optimization
-
-### Database Indexes
-- Primary key on `id`
-- Indexes on `device_id`, `timestamp`, `latitude`, `longitude`, `created_at`
-- Compound indexes for common query patterns:
-  - `(device_id, timestamp)` for device-specific time range queries
-  - `(latitude, longitude)` for location-based queries
-  - `(created_at)` for cleanup operations
-
-### Connection Management
-- Async SQLAlchemy with aiosqlite
-- Connection pooling for concurrent requests
-- Automatic connection cleanup
-
-### Memory Efficiency
-- Streaming responses for large datasets
-- Pagination support with configurable limits
-- Automatic cleanup of expired backup files
-
-## 🚨 Error Handling
-
-### GPS Data Validation Errors
-- **422 Unprocessable Entity**: Invalid coordinates, unrealistic speeds, bad timestamps
-- **429 Too Many Requests**: Rate limit exceeded
-- **500 Internal Server Error**: Database or system errors
-
-### System Monitoring
-- Comprehensive logging at INFO level
-- Warning logs for approaching limits
-- Critical logs for emergency situations
-- WebSocket error handling with auto-reconnection
-
-### Backup System
-- Graceful handling of backup creation failures
-- Automatic cleanup of corrupted files
-- Error reporting via API responses
-
-## 🔐 Security Considerations
-
-### Input Validation
-- Strict GPS coordinate bounds checking
-- Device ID length limits and pattern validation
-- Timestamp reasonableness validation
-- SQL injection protection via SQLAlchemy ORM
-
-### File Download Security
-- Filename pattern validation for backup downloads
-- Path traversal protection
-- Content-Type headers for proper file handling
-
-### Rate Limiting
-- Per-IP rate limiting to prevent abuse
-- Configurable limits via slowapi middleware
-- Proper HTTP status codes for rate limit violations
-
-## 📈 Success Metrics
-
-The system achieves all key success metrics:
-
-✅ **Handle sustained 1 GPS point/second ingestion**  
-✅ **Automatic database management with 0 manual intervention**  
-✅ **Dashboard provides real-time system visibility**  
-✅ **Backup system preserves data before deletion**  
-✅ **System stays within free tier limits automatically**
+This project is for GPS data streaming and monitoring purposes.
 
 ## 🤝 Contributing
 
 1. Fork the repository
 2. Create a feature branch
-3. Add tests for new functionality
-4. Ensure all tests pass
-5. Submit a pull request
+3. Make your changes
+4. Submit a pull request
 
-## 📄 License
+## 📞 Support
 
-MIT License - see LICENSE file for details
-
-## 🆘 Troubleshooting
-
-### Common Issues
-
-**Server won't start:**
-- Check if port 8000 is available
-- Verify all dependencies are installed
-- Check Python version (3.8+ required)
-
-**WebSocket connection fails:**
-- Ensure no firewall blocking WebSocket connections
-- Try refreshing the dashboard page
-- Check browser console for errors
-
-**Rate limiting too strict:**
-- Modify the `@limiter.limit("1/second")` decorator in main.py
-- Restart the server after changes
-
-**Database performance issues:**
-- Check if database file has proper indexes
-- Monitor disk space for the SQLite file
-- Consider vacuum operation for fragmented databases
-
-### Logs Location
-- Application logs: Console output
-- Access logs: FastAPI/Uvicorn standard output
-- Error details: Check exception tracebacks in console
-
-### Support
-For issues and questions, please create an issue in the repository with:
-- Description of the problem
-- Steps to reproduce
-- System information (OS, Python version)
-- Relevant log output
+For issues and questions, please use the GitHub issues tracker.

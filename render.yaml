@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: gps-data-streamer
+    runtime: docker
+    plan: free
+    region: oregon
+    branch: main
+    buildCommand: docker build -t gps-streamer .
+    startCommand: python main.py
+    healthCheckPath: /health
+    envVars:
+      - key: DB_PASSWORD
+        sync: false
+      - key: DATABASE_NAME
+        value: gps_streamer
+      - key: PORT
+        value: 8000
+    scaling:
+      minInstances: 1
+      maxInstances: 1
