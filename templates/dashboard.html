@@ -455,7 +455,7 @@
         // GPS Data
         async function refreshGPSData() {
             try {
-                let url = '/api/gps/data?limit=50000';
+                let url = '/api/gps/data?limit=100';
                 if (currentDeviceFilter) {
                     url += `&device_id=${encodeURIComponent(currentDeviceFilter)}`;
                 }
